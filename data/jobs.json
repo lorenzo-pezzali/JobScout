@@ -1,0 +1,119 @@
+[
+  {
+    "title": "Senior Engineer (TypeScript, Node.js, React)",
+    "company": "Ukoru",
+    "location": "Remote; Italy-compatible time zones UTC-5 to UTC+6",
+    "remote": "100% remote",
+    "publishedAt": "Posted September 16, 2026 (today)",
+    "url": "https://talentframe.online/job/senior-engineer-typescript-nodejs-react",
+    "source": "talentframe.online; employer: Ukoru",
+    "stack": [
+      "React",
+      "TypeScript",
+      "Node.js",
+      "TanStack Start",
+      "Postgres",
+      "SQL",
+      "Automated testing"
+    ],
+    "match": 91,
+    "why": "Excellent match for Marco’s React/TypeScript, SQL, testing, remote collaboration, and product-development background. The role is full-stack-leaning, but the frontend stack is primary and Node.js is only part of the broader remit.",
+    "eligibility": "100% remote; Italy falls within the stated UTC-5 to UTC+6 hiring window, and no Italy exclusion is listed.",
+    "id": "2dfaeec10114",
+    "status": "applied"
+  },
+  {
+    "title": "Senior Frontend-Entwickler:in React / TypeScript, 100% Remote, KI-First",
+    "company": "yourMAIL GmbH",
+    "location": "Remote Europe; Germany preferred",
+    "remote": "100% remote",
+    "publishedAt": "Posted September 14, 2026; updated within the last day",
+    "url": "https://join.com/companies/yourmaileu/16651796-senior-frontend-entwickler-in-react-typescript-100-remote-ki-first",
+    "source": "join.com; employer: yourMAIL GmbH",
+    "stack": [
+      "React",
+      "TypeScript",
+      "React 19",
+      "Vite",
+      "Tailwind CSS",
+      "TanStack Query",
+      "REST",
+      "Azure MSAL",
+      "Git"
+    ],
+    "match": 88,
+    "why": "Very strong match for React/TypeScript, authentication flows, frontend architecture, API integration, Vite, and remote product work. Azure/.NET exposure is helpful but not a core requirement.",
+    "eligibility": "The listing says Germany is preferred but EU applications are possible, explicitly allowing consideration from Italy.",
+    "id": "d32c4ace3d43",
+    "status": "ignored"
+  },
+  {
+    "title": "Frontend Engineer (Accessibility Focus)",
+    "company": "Undisclosed European product team",
+    "location": "Remote Europe",
+    "remote": "Remote contract; 6 months",
+    "publishedAt": "Posted September 14, 2026 (2 days ago)",
+    "url": "https://skillroute.online/job/frontend-engineer-accessibility-focus",
+    "source": "skillroute.online",
+    "stack": [
+      "React",
+      "Next.js",
+      "TypeScript",
+      "Material UI",
+      "Accessibility",
+      "Frontend architecture"
+    ],
+    "match": 84,
+    "why": "Strong fit for Marco’s React, TypeScript, Next.js, architecture, maintainability, and cross-functional communication experience. The accessibility focus is a specialization rather than a mismatch, and the role excludes Python/ML-heavy work.",
+    "eligibility": "The posting describes a remote role with a European team and does not restrict applicants to a single European country; Italy is therefore eligible based on the available evidence.",
+    "id": "c0eba8f9c9a6",
+    "status": "ignored"
+  },
+  {
+    "title": "Software Engineer (Fullstack / Microfrontends / Java / Kotlin)",
+    "company": "1dea",
+    "location": "Remote Europe",
+    "remote": "Fully remote B2B consulting",
+    "publishedAt": "Posted September 14, 2026; updated within the last day",
+    "url": "https://freehire.beebreeze.cc/jobs/software-engineer-fullstack-microfrontends-java-kotlin-1dea-acgsy4xs",
+    "source": "freehire.beebreeze.cc; employer/recruiter: 1dea",
+    "stack": [
+      "React",
+      "TypeScript",
+      "Java",
+      "Spring Boot",
+      "REST",
+      "Docker",
+      "Playwright",
+      "Kubernetes",
+      "Microfrontends"
+    ],
+    "match": 76,
+    "why": "Distinct full-stack role with unusually strong overlap in React/TypeScript, Java enterprise experience, REST, Docker, Playwright, and frontend architecture. It is less ideal because it requires substantial backend and consulting work and lists German as desirable.",
+    "eligibility": "The posting is fully remote across Europe, so an Italy-based B2B contractor is eligible unless client-specific restrictions are introduced later.",
+    "id": "9bef661965b4",
+    "status": "ignored"
+  },
+  {
+    "title": "Senior Frontend Engineer",
+    "company": "KoreLabs Cloud",
+    "location": "Remote Europe; CET ±3 hours",
+    "remote": "Remote-first",
+    "publishedAt": "Freshly listed/live and verified September 16, 2026 (today)",
+    "url": "https://www.korelabs.cloud/careers/senior-frontend-engineer",
+    "source": "korelabs.cloud; official employer careers page",
+    "stack": [
+      "React",
+      "TypeScript",
+      "Real-time data",
+      "Complex state management",
+      "Frontend architecture",
+      "UX"
+    ],
+    "match": 83,
+    "why": "Strong senior-level match for React/TypeScript, large-scale interfaces, frontend architecture, performance-oriented product work, and technical communication. The product includes AI-driven workflows, but this is a frontend product-engineering role rather than an ML/data role.",
+    "eligibility": "The official posting accepts candidates in European time zones within CET ±3 hours and requires EU or UK work authorization; Italy satisfies both conditions.",
+    "id": "339a2df05130",
+    "status": "new"
+  }
+]
