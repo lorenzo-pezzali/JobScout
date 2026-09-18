@@ -134,7 +134,7 @@ function buildSearchPrompt(profile: string, existing: Job[]): string {
     .map((j) => `${j.company} - ${j.title}`)
     .join('; ');
 
-  return `Today is ${isoDate(new Date())}. Search the live web for ${BATCH_SIZE} currently open job postings that are an excellent fit for the candidate described below. Infer the right job titles and seniority level to search for directly from the candidate profile - do not restrict yourself to a single fixed query. Only include jobs published or freshly listed within the last ${DAYS_FRESH} days. Only include jobs the candidate is genuinely eligible to work in, based on the location/remote preferences described in their profile. Do not include jobs that are already closed. Every url must be copied verbatim from a page you actually found in your search results - never construct, guess or "clean up" a URL. When the original employer/ATS application page is among your results prefer it, otherwise use the job-board page you found. Never return paywalled job-board links that require a login to view the posting. Verify geography and freshness from available evidence. Each returned job must be a genuinely distinct posting (different company or different role) - never list near-duplicates of each other in the same response.${
+  return `Today is ${isoDate(new Date())}. Search the live web for ${BATCH_SIZE} currently open job postings that are an excellent fit for the candidate described below. Infer the right job titles and seniority level to search for directly from the candidate profile - do not restrict yourself to a single fixed query. Only include jobs published or freshly listed within the last ${DAYS_FRESH} days. Geographic eligibility is a HARD filter: the candidate can only work from the country/city stated in their profile (plus any relocation or remote preference explicitly stated there). Exclude every posting restricted to another country or region, or that requires work authorization/residency the candidate does not have - e.g. "US only", "must be authorized to work in the United States", "Canada residents only", "EU work permit required" for a non-EU candidate. On-site or hybrid roles must be in the candidate's city/country; remote roles are fine only when the posting states no geographic restriction or explicitly includes the candidate's country. Do not return a job whose eligibility is conditional on something the candidate does not have - drop it and find another one instead. Do not include jobs that are already closed. Every url must be copied verbatim from a page you actually found in your search results - never construct, guess or "clean up" a URL. When the original employer/ATS application page is among your results prefer it, otherwise use the job-board page you found. Never return paywalled job-board links that require a login to view the posting. Verify geography and freshness from available evidence. Each returned job must be a genuinely distinct posting (different company or different role) - never list near-duplicates of each other in the same response.${
     alreadyShown
       ? ` IMPORTANT: the candidate has ALREADY been shown these jobs in previous searches, do NOT include them again, find different postings: ${alreadyShown}.`
       : ''
@@ -142,7 +142,7 @@ function buildSearchPrompt(profile: string, existing: Job[]): string {
 
 Candidate profile: ${profile}
 
-Return ONLY JSON with shape {"jobs":[{"title":"","company":"","location":"","remote":"","publishedAt":"human-readable age/date","url":"https://...","source":"official/ATS domain","stack":["React"],"match":0,"why":"1-2 concise sentences on why this role fits the candidate","eligibility":"short explanation of why the candidate is eligible to apply","whyWorkingForUs":"a SHORT first-person answer (max 2 short sentences, under 40 words) to \\"Why do you want to work for us?\\", specific to this company/role, plain everyday language - avoid corporate buzzwords like thrilled, passionate, align, mission, journey, avoid em dashes, sound like a real candidate typed it quickly rather than an AI: include one small natural imperfection (a minor typo, an informal contraction, a slightly awkward phrasing) - just one or two such slips, keep it understandable"}]}. Match is 0-100 based on fit with the candidate profile. No markdown, no code fences.`;
+Return ONLY JSON with shape {"jobs":[{"title":"","company":"","location":"","remote":"","publishedAt":"human-readable age/date","url":"https://...","source":"official/ATS domain","stack":["React"],"match":0,"why":"1-2 concise sentences on why this role fits the candidate","eligible":true,"eligibility":"short explanation of why the candidate is eligible to apply from their location","whyWorkingForUs":"a SHORT first-person answer (max 2 short sentences, under 40 words) to \\"Why do you want to work for us?\\", specific to this company/role, plain everyday language - avoid corporate buzzwords like thrilled, passionate, align, mission, journey, avoid em dashes, sound like a real candidate typed it quickly rather than an AI: include one small natural imperfection (a minor typo, an informal contraction, a slightly awkward phrasing) - just one or two such slips, keep it understandable"}]}. Match is 0-100 based on fit with the candidate profile. "eligible" must be false whenever the posting's location or work-authorization requirements exclude the candidate; such jobs should not be returned at all. No markdown, no code fences.`;
 }
 
 function normalizeProvider(value: unknown): Provider {
@@ -402,8 +402,14 @@ async function fetchFreshJobs(
   if (grounded.length < candidates.length) {
     console.warn(`Dropped ${candidates.length - grounded.length} job(s) with URLs not found in search citations.`);
   }
+  // The model is asked to flag geographic/work-authorization eligibility
+  // explicitly; anything it does not vouch for is dropped.
+  const eligible = grounded.filter((x) => x.eligible !== false);
+  if (eligible.length < grounded.length) {
+    console.warn(`Dropped ${grounded.length - eligible.length} job(s) the model marked as not eligible.`);
+  }
 
-  const fresh: Job[] = grounded
+  const fresh: Job[] = eligible
     .filter((x: any) => !knownUrls.has(x.url))
     .filter((x: any) => !knownKeys.has(normalizeKey(x)))
     .filter((x: any) => {
@@ -412,7 +418,7 @@ async function fetchFreshJobs(
       seenInBatch.add(key);
       return true;
     })
-    .map((x: any) => ({
+    .map(({ eligible: _eligible, ...x }: any) => ({
       ...x,
       id: crypto.createHash('sha1').update(x.url).digest('hex').slice(0, 12),
       match: Math.max(0, Math.min(100, Number(x.match) || 0)),
