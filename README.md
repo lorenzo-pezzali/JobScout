@@ -40,10 +40,14 @@ the browser regardless, since that's what actually gets sent with each request.
 |---|---|---|---|
 | ChatGPT (OpenAI) | `gpt-4o` | `OPENAI_MODEL` | OpenAI `web_search` tool (Responses API) |
 | Gemini (Google) | `gemini-2.5-flash` | `GEMINI_MODEL` | Google Search grounding |
-| OpenRouter | `perplexity/sonar` | `OPENROUTER_MODEL` | Native for `perplexity/*` models, otherwise OpenRouter's `web` plugin (extra per-request cost) |
+| OpenRouter | `perplexity/sonar` | `OPENROUTER_MODEL` | Native for `perplexity/*` models (with a date filter matching the freshness window), otherwise OpenRouter's `web` plugin (extra per-request cost) |
 
 OpenRouter talks the OpenAI Chat Completions API, so any model slug on
-[openrouter.ai/models](https://openrouter.ai/models) works. CV PDFs are parsed by OpenRouter
+[openrouter.ai/models](https://openrouter.ai/models) works. Jobs whose URL doesn't appear among
+the pages the search actually retrieved are discarded, since models otherwise invent
+plausible-looking career-page links. Perplexity models return solid results; non-Perplexity
+models via the `web` plugin often get irrelevant search hits and end up with few or no jobs
+per search, so stick with the default unless you have a reason not to. CV PDFs are parsed by OpenRouter
 itself (text-layer extraction via the free `pdf-text` engine, so scanned/image-only CVs are not
 supported on this provider).
 

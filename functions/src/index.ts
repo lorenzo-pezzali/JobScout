@@ -134,7 +134,7 @@ function buildSearchPrompt(profile: string, existing: Job[]): string {
     .map((j) => `${j.company} - ${j.title}`)
     .join('; ');
 
-  return `Today is ${isoDate(new Date())}. Search the live web for ${BATCH_SIZE} currently open job postings that are an excellent fit for the candidate described below. Infer the right job titles and seniority level to search for directly from the candidate profile - do not restrict yourself to a single fixed query. Only include jobs published or freshly listed within the last ${DAYS_FRESH} days. Only include jobs the candidate is genuinely eligible to work in, based on the location/remote preferences described in their profile. Do not include jobs that are already closed. Prefer the ORIGINAL employer application URL and never return paywalled job-board links that require a login to view the posting. Verify geography and freshness from available evidence. Each returned job must be a genuinely distinct posting (different company or different role) - never list near-duplicates of each other in the same response.${
+  return `Today is ${isoDate(new Date())}. Search the live web for ${BATCH_SIZE} currently open job postings that are an excellent fit for the candidate described below. Infer the right job titles and seniority level to search for directly from the candidate profile - do not restrict yourself to a single fixed query. Only include jobs published or freshly listed within the last ${DAYS_FRESH} days. Only include jobs the candidate is genuinely eligible to work in, based on the location/remote preferences described in their profile. Do not include jobs that are already closed. Every url must be copied verbatim from a page you actually found in your search results - never construct, guess or "clean up" a URL. When the original employer/ATS application page is among your results prefer it, otherwise use the job-board page you found. Never return paywalled job-board links that require a login to view the posting. Verify geography and freshness from available evidence. Each returned job must be a genuinely distinct posting (different company or different role) - never list near-duplicates of each other in the same response.${
     alreadyShown
       ? ` IMPORTANT: the candidate has ALREADY been shown these jobs in previous searches, do NOT include them again, find different postings: ${alreadyShown}.`
       : ''
@@ -327,7 +327,13 @@ async function generateJsonFromFile(
 }
 
 // Runs a prompt with live web-search grounding enabled (used for job search).
-async function searchWithGrounding(provider: Provider, apiKey: string, prompt: string): Promise<string> {
+type GroundedResult = {
+  text: string;
+  // URLs the model actually retrieved, when the provider reports them.
+  citations?: string[];
+};
+
+async function searchWithGrounding(provider: Provider, apiKey: string, prompt: string): Promise<GroundedResult> {
   if (provider === 'gemini') {
     const ai = await newGoogleGenAI(apiKey);
     const response = await ai.models.generateContent({
@@ -335,7 +341,7 @@ async function searchWithGrounding(provider: Provider, apiKey: string, prompt: s
       contents: prompt,
       config: { tools: [{ googleSearch: {} }] },
     });
-    return response.text ?? '';
+    return { text: response.text ?? '' };
   }
 
   if (provider === 'openrouter') {
@@ -350,7 +356,11 @@ async function searchWithGrounding(provider: Provider, apiKey: string, prompt: s
         ? { search_after_date_filter: perplexityAfterDate(DAYS_FRESH) }
         : { plugins: [{ id: 'web' }] }),
     } satisfies OpenRouterParams as OpenRouterParams);
-    return extractJsonObject(response.choices[0]?.message?.content ?? '');
+    const message = response.choices[0]?.message;
+    const citations = (message?.annotations ?? [])
+      .map((a: any) => a?.url_citation?.url)
+      .filter((u: unknown): u is string => typeof u === 'string');
+    return { text: extractJsonObject(message?.content ?? ''), citations };
   }
 
   const client = new OpenAI({ apiKey });
@@ -359,7 +369,7 @@ async function searchWithGrounding(provider: Provider, apiKey: string, prompt: s
     tools: [{ type: 'web_search' }],
     input: prompt,
   });
-  return response.output_text;
+  return { text: response.output_text };
 }
 
 async function fetchFreshJobs(
@@ -368,7 +378,11 @@ async function fetchFreshJobs(
   provider: Provider,
   apiKey: string
 ): Promise<Job[]> {
-  const raw = await searchWithGrounding(provider, apiKey, buildSearchPrompt(profile, existing));
+  const { text: raw, citations } = await searchWithGrounding(
+    provider,
+    apiKey,
+    buildSearchPrompt(profile, existing)
+  );
   const text = raw
     .trim()
     .replace(/^```json\s*/, '')
@@ -379,8 +393,17 @@ async function fetchFreshJobs(
   const knownKeys = new Set(existing.map(normalizeKey));
   const seenInBatch = new Set<string>();
 
-  const fresh: Job[] = (parsed.jobs || [])
-    .filter((x: any) => /^https?:\/\//.test(x.url))
+  // When the provider reports which pages it actually retrieved, drop jobs
+  // whose URL isn't one of them: models sometimes invent plausible-looking
+  // career-page URLs that don't exist.
+  const cited = citations?.length ? new Set(citations) : null;
+  const candidates: any[] = (parsed.jobs || []).filter((x: any) => /^https?:\/\//.test(x.url));
+  const grounded = cited ? candidates.filter((x) => cited.has(x.url)) : candidates;
+  if (grounded.length < candidates.length) {
+    console.warn(`Dropped ${candidates.length - grounded.length} job(s) with URLs not found in search citations.`);
+  }
+
+  const fresh: Job[] = grounded
     .filter((x: any) => !knownUrls.has(x.url))
     .filter((x: any) => !knownKeys.has(normalizeKey(x)))
     .filter((x: any) => {
