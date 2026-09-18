@@ -134,7 +134,7 @@ function buildSearchPrompt(profile: string, existing: Job[]): string {
     .map((j) => `${j.company} - ${j.title}`)
     .join('; ');
 
-  return `Search the live web for ${BATCH_SIZE} currently open job postings that are an excellent fit for the candidate described below. Infer the right job titles and seniority level to search for directly from the candidate profile - do not restrict yourself to a single fixed query. Only include jobs published or freshly listed within the last ${DAYS_FRESH} days. Only include jobs the candidate is genuinely eligible to work in, based on the location/remote preferences described in their profile. Do not include jobs that are already closed. Prefer the ORIGINAL employer application URL and never return paywalled job-board links that require a login to view the posting. Verify geography and freshness from available evidence. Each returned job must be a genuinely distinct posting (different company or different role) - never list near-duplicates of each other in the same response.${
+  return `Today is ${isoDate(new Date())}. Search the live web for ${BATCH_SIZE} currently open job postings that are an excellent fit for the candidate described below. Infer the right job titles and seniority level to search for directly from the candidate profile - do not restrict yourself to a single fixed query. Only include jobs published or freshly listed within the last ${DAYS_FRESH} days. Only include jobs the candidate is genuinely eligible to work in, based on the location/remote preferences described in their profile. Do not include jobs that are already closed. Prefer the ORIGINAL employer application URL and never return paywalled job-board links that require a login to view the posting. Verify geography and freshness from available evidence. Each returned job must be a genuinely distinct posting (different company or different role) - never list near-duplicates of each other in the same response.${
     alreadyShown
       ? ` IMPORTANT: the candidate has ALREADY been shown these jobs in previous searches, do NOT include them again, find different postings: ${alreadyShown}.`
       : ''
@@ -179,7 +179,18 @@ function isPerplexityModel(model: string): boolean {
 // OpenRouter-only request fields the OpenAI SDK types don't know about.
 type OpenRouterParams = OpenAI.Chat.ChatCompletionCreateParamsNonStreaming & {
   plugins?: ({ id: 'web' } | { id: 'file-parser'; pdf: { engine: string } })[];
+  search_after_date_filter?: string;
 };
+
+function isoDate(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
+// Perplexity's search_after_date_filter wants MM/DD/YYYY.
+function perplexityAfterDate(daysAgo: number): string {
+  const d = new Date(Date.now() - daysAgo * 24 * 60 * 60 * 1000);
+  return `${d.getUTCMonth() + 1}/${d.getUTCDate()}/${d.getUTCFullYear()}`;
+}
 
 function openRouterJsonFormat(model: string) {
   return isPerplexityModel(model) ? {} : { response_format: { type: 'json_object' as const } };
@@ -333,7 +344,11 @@ async function searchWithGrounding(provider: Provider, apiKey: string, prompt: s
       model,
       messages: [{ role: 'user', content: prompt }],
       ...openRouterJsonFormat(model),
-      ...(isPerplexityModel(model) ? {} : { plugins: [{ id: 'web' }] }),
+      // Perplexity searches natively and can restrict results by date; other
+      // models get OpenRouter's web plugin and rely on the date in the prompt.
+      ...(isPerplexityModel(model)
+        ? { search_after_date_filter: perplexityAfterDate(DAYS_FRESH) }
+        : { plugins: [{ id: 'web' }] }),
     } satisfies OpenRouterParams as OpenRouterParams);
     return extractJsonObject(response.choices[0]?.message?.content ?? '');
   }
