@@ -170,13 +170,31 @@ function newOpenRouterClient(apiKey: string): OpenAI {
   });
 }
 
-// Models routed through OpenRouter don't always honour response_format, and
-// some (e.g. Perplexity) wrap JSON in fences or add citations around it, so
-// the JSON object is extracted from the raw text instead.
+// Perplexity models reject response_format (400) and search the web natively;
+// everything else routed through OpenRouter gets JSON mode and the web plugin.
+function isPerplexityModel(model: string): boolean {
+  return model.startsWith('perplexity/');
+}
+
+// OpenRouter-only request fields the OpenAI SDK types don't know about.
+type OpenRouterParams = OpenAI.Chat.ChatCompletionCreateParamsNonStreaming & {
+  plugins?: ({ id: 'web' } | { id: 'file-parser'; pdf: { engine: string } })[];
+};
+
+function openRouterJsonFormat(model: string) {
+  return isPerplexityModel(model) ? {} : { response_format: { type: 'json_object' as const } };
+}
+
+// Some models (e.g. Perplexity) wrap JSON in fences or add citations around
+// it, and a model can occasionally answer in prose instead of JSON. Extract
+// the outermost object and fail loudly when there is none.
 function extractJsonObject(text: string): string {
   const start = text.indexOf('{');
   const end = text.lastIndexOf('}');
-  return start >= 0 && end > start ? text.slice(start, end + 1) : text.trim();
+  if (start < 0 || end <= start) {
+    throw new Error(`The model did not return JSON: ${text.trim().slice(0, 200)}`);
+  }
+  return text.slice(start, end + 1);
 }
 
 function resolveApiKey(provider: Provider, provided: unknown): string {
@@ -219,9 +237,11 @@ async function generateJson(provider: Provider, apiKey: string, prompt: string):
   }
 
   if (provider === 'openrouter') {
+    const model = resolveModel(provider);
     const response = await newOpenRouterClient(apiKey).chat.completions.create({
-      model: resolveModel(provider),
+      model,
       messages: [{ role: 'user', content: prompt }],
+      ...openRouterJsonFormat(model),
     });
     return extractJsonObject(response.choices[0]?.message?.content ?? '');
   }
@@ -260,8 +280,9 @@ async function generateJsonFromFile(
     // OpenRouter parses the PDF server-side for models without native file input.
     // CVs are text PDFs, so the free text-layer engine is used instead of the
     // default OCR one (mistral-ocr, billed per page). Scanned CVs won't work.
+    const model = resolveModel(provider);
     const response = await newOpenRouterClient(apiKey).chat.completions.create({
-      model: resolveModel(provider),
+      model,
       messages: [
         {
           role: 'user',
@@ -271,8 +292,9 @@ async function generateJsonFromFile(
           ],
         },
       ],
+      ...openRouterJsonFormat(model),
       plugins: [{ id: 'file-parser', pdf: { engine: 'pdf-text' } }],
-    } as OpenAI.Chat.ChatCompletionCreateParamsNonStreaming);
+    } satisfies OpenRouterParams as OpenRouterParams);
     return extractJsonObject(response.choices[0]?.message?.content ?? '');
   }
 
@@ -307,13 +329,12 @@ async function searchWithGrounding(provider: Provider, apiKey: string, prompt: s
 
   if (provider === 'openrouter') {
     const model = resolveModel(provider);
-    // Perplexity models search the web natively; anything else gets OpenRouter's web plugin.
-    const plugins = model.startsWith('perplexity/') ? undefined : [{ id: 'web' }];
     const response = await newOpenRouterClient(apiKey).chat.completions.create({
       model,
       messages: [{ role: 'user', content: prompt }],
-      ...(plugins ? { plugins } : {}),
-    } as OpenAI.Chat.ChatCompletionCreateParamsNonStreaming);
+      ...openRouterJsonFormat(model),
+      ...(isPerplexityModel(model) ? {} : { plugins: [{ id: 'web' }] }),
+    } satisfies OpenRouterParams as OpenRouterParams);
     return extractJsonObject(response.choices[0]?.message?.content ?? '');
   }
 
