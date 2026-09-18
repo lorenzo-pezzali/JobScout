@@ -27,6 +27,8 @@ import {
   Stack,
   TextField,
   ThemeProvider,
+  ToggleButton,
+  ToggleButtonGroup,
   Typography,
 } from '@mui/material';
 import UploadFileRoundedIcon from '@mui/icons-material/UploadFileRounded';
@@ -69,11 +71,32 @@ type Stats = {
   ignored: number;
 };
 
+type Provider = 'openai' | 'gemini';
+
 const PROFILE_KEY = 'jobscout.profile';
 const CV_DATA_KEY = 'jobscout.cvData';
 const CLIENT_ID_KEY = 'jobscout.clientId';
 const API_KEY_KEY = 'jobscout.apiKey';
+const GEMINI_API_KEY_KEY = 'jobscout.geminiApiKey';
+const PROVIDER_KEY = 'jobscout.provider';
 const CV_LAYOUT_KEY = 'jobscout.cvLayout';
+
+const PROVIDERS: { id: Provider; name: string; keyPlaceholder: string; keyLink: string; keyLinkLabel: string }[] = [
+  {
+    id: 'openai',
+    name: 'ChatGPT (OpenAI)',
+    keyPlaceholder: 'sk-...',
+    keyLink: 'https://platform.openai.com/api-keys',
+    keyLinkLabel: 'platform.openai.com/api-keys',
+  },
+  {
+    id: 'gemini',
+    name: 'Gemini (Google)',
+    keyPlaceholder: 'AIza...',
+    keyLink: 'https://aistudio.google.com/apikey',
+    keyLinkLabel: 'aistudio.google.com/apikey',
+  },
+];
 
 const CV_LAYOUTS = [
   { id: 'classic', name: 'Classic', color: '#1F3B8C' },
@@ -89,6 +112,30 @@ function getApiKey(): string {
   } catch {
     return '';
   }
+}
+
+function getGeminiApiKey(): string {
+  try {
+    return localStorage.getItem(GEMINI_API_KEY_KEY) || '';
+  } catch {
+    return '';
+  }
+}
+
+function getProvider(): Provider {
+  try {
+    return localStorage.getItem(PROVIDER_KEY) === 'gemini' ? 'gemini' : 'openai';
+  } catch {
+    return 'openai';
+  }
+}
+
+function getKeyForProvider(provider: Provider): string {
+  return provider === 'gemini' ? getGeminiApiKey() : getApiKey();
+}
+
+function getActiveApiKey(): string {
+  return getKeyForProvider(getProvider());
 }
 
 function getCvLayout(): string {
@@ -148,7 +195,12 @@ function CvUpload({
       const response = await fetch('/api/profile', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ base64, filename: file.name, apiKey: getApiKey() || undefined }),
+        body: JSON.stringify({
+          base64,
+          filename: file.name,
+          provider: getProvider(),
+          apiKey: getActiveApiKey() || undefined,
+        }),
       });
       const data = await response.json();
 
@@ -247,13 +299,16 @@ function CvUpload({
 }
 
 function ApiKeySetup({ onSaved }: { onSaved: () => void }) {
+  const [provider, setProvider] = useState<Provider>(() => getProvider());
   const [apiKey, setApiKey] = useState('');
   const [showKey, setShowKey] = useState(false);
+  const providerInfo = PROVIDERS.find((p) => p.id === provider)!;
 
   function save() {
     if (!apiKey.trim()) return;
     try {
-      localStorage.setItem(API_KEY_KEY, apiKey.trim());
+      localStorage.setItem(PROVIDER_KEY, provider);
+      localStorage.setItem(provider === 'gemini' ? GEMINI_API_KEY_KEY : API_KEY_KEY, apiKey.trim());
     } catch {
       // localStorage unavailable, key will just need to be re-entered next time
     }
@@ -275,16 +330,32 @@ function ApiKeySetup({ onSaved }: { onSaved: () => void }) {
           <Typography variant="h4" sx={{ fontWeight: 800 }} gutterBottom>
             Job Scout
           </Typography>
-          <Typography color="text.secondary" sx={{ mb: 4 }}>
-            This app calls OpenAI on your behalf, so it needs your own API key. It's stored only
-            in this browser and sent directly with your requests - never saved on any server.
+          <Typography color="text.secondary" sx={{ mb: 3 }}>
+            This app calls an AI provider on your behalf, so it needs your own API key. It's
+            stored only in this browser and sent directly with your requests - never saved on any
+            server.
           </Typography>
+
+          <ToggleButtonGroup
+            fullWidth
+            exclusive
+            size="small"
+            value={provider}
+            onChange={(_event, value) => value && setProvider(value)}
+            sx={{ mb: 2 }}
+          >
+            {PROVIDERS.map((p) => (
+              <ToggleButton key={p.id} value={p.id}>
+                {p.name}
+              </ToggleButton>
+            ))}
+          </ToggleButtonGroup>
 
           <TextField
             fullWidth
             size="small"
             type={showKey ? 'text' : 'password'}
-            placeholder="sk-..."
+            placeholder={providerInfo.keyPlaceholder}
             value={apiKey}
             onChange={(event) => setApiKey(event.target.value)}
             onKeyDown={(event) => {
@@ -309,13 +380,8 @@ function ApiKeySetup({ onSaved }: { onSaved: () => void }) {
 
           <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1.5, mb: 3 }}>
             Don't have one? Grab it from{' '}
-            <a
-              href="https://platform.openai.com/api-keys"
-              target="_blank"
-              rel="noreferrer"
-              style={{ color: 'inherit' }}
-            >
-              platform.openai.com/api-keys
+            <a href={providerInfo.keyLink} target="_blank" rel="noreferrer" style={{ color: 'inherit' }}>
+              {providerInfo.keyLinkLabel}
             </a>
             . You can change it later from the menu → Settings.
           </Typography>
@@ -368,16 +434,25 @@ function JobCardSkeleton() {
 }
 
 function SettingsDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const [apiKey, setApiKey] = useState(() => getApiKey());
+  const [provider, setProvider] = useState<Provider>(() => getProvider());
+  const [apiKey, setApiKey] = useState(() => getKeyForProvider(getProvider()));
   const [showKey, setShowKey] = useState(false);
   const [layout, setLayout] = useState(() => getCvLayout());
+  const providerInfo = PROVIDERS.find((p) => p.id === provider)!;
+
+  function selectProvider(next: Provider) {
+    setProvider(next);
+    setApiKey(getKeyForProvider(next));
+  }
 
   function save() {
     try {
+      localStorage.setItem(PROVIDER_KEY, provider);
+      const key = provider === 'gemini' ? GEMINI_API_KEY_KEY : API_KEY_KEY;
       if (apiKey.trim()) {
-        localStorage.setItem(API_KEY_KEY, apiKey.trim());
+        localStorage.setItem(key, apiKey.trim());
       } else {
-        localStorage.removeItem(API_KEY_KEY);
+        localStorage.removeItem(key);
       }
       localStorage.setItem(CV_LAYOUT_KEY, layout);
     } catch {
@@ -391,13 +466,31 @@ function SettingsDialog({ open, onClose }: { open: boolean; onClose: () => void 
       <DialogTitle>Settings</DialogTitle>
       <DialogContent>
         <Typography variant="subtitle2" sx={{ mb: 1 }}>
-          Your OpenAI API key
+          AI provider
+        </Typography>
+        <ToggleButtonGroup
+          fullWidth
+          exclusive
+          size="small"
+          value={provider}
+          onChange={(_event, value) => value && selectProvider(value)}
+          sx={{ mb: 2 }}
+        >
+          {PROVIDERS.map((p) => (
+            <ToggleButton key={p.id} value={p.id}>
+              {p.name}
+            </ToggleButton>
+          ))}
+        </ToggleButtonGroup>
+
+        <Typography variant="subtitle2" sx={{ mb: 1 }}>
+          Your {providerInfo.name} API key
         </Typography>
         <TextField
           fullWidth
           size="small"
           type={showKey ? 'text' : 'password'}
-          placeholder="sk-..."
+          placeholder={providerInfo.keyPlaceholder}
           value={apiKey}
           onChange={(event) => setApiKey(event.target.value)}
           slotProps={{
@@ -418,7 +511,12 @@ function SettingsDialog({ open, onClose }: { open: boolean; onClose: () => void 
         />
         <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
           Required for every search and CV action from this browser - stored only here, never on
-          any server. Clearing it will make those actions fail until you set one again.
+          any server. Clearing it will make those actions fail until you set one again. Grab a key
+          from{' '}
+          <a href={providerInfo.keyLink} target="_blank" rel="noreferrer" style={{ color: 'inherit' }}>
+            {providerInfo.keyLinkLabel}
+          </a>
+          .
         </Typography>
 
         <Typography variant="subtitle2" sx={{ mt: 3, mb: 1.5 }}>
@@ -457,7 +555,7 @@ function SettingsDialog({ open, onClose }: { open: boolean; onClose: () => void 
 
 function App() {
   const clientIdRef = useRef(getOrCreateClientId());
-  const [apiKeyReady, setApiKeyReady] = useState(() => !!getApiKey());
+  const [apiKeyReady, setApiKeyReady] = useState(() => !!getActiveApiKey());
   const [profile, setProfile] = useState<string | null>(() =>
     localStorage.getItem(PROFILE_KEY)
   );
@@ -513,7 +611,8 @@ function App() {
         body: JSON.stringify({
           profile,
           clientId: clientIdRef.current,
-          apiKey: getApiKey() || undefined,
+          provider: getProvider(),
+          apiKey: getActiveApiKey() || undefined,
         }),
       });
       const data = await response.json();
@@ -584,7 +683,8 @@ function App() {
             eligibility: job.eligibility,
           },
           layout: getCvLayout(),
-          apiKey: getApiKey() || undefined,
+          provider: getProvider(),
+          apiKey: getActiveApiKey() || undefined,
         }),
       });
 

@@ -2,6 +2,7 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import OpenAI from 'openai';
+import { GoogleGenAI } from '@google/genai';
 import PDFDocument from 'pdfkit';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -13,6 +14,8 @@ app.use(express.json({ limit: '20mb' }));
 const port = Number(process.env.PORT || 8787);
 
 type Status = 'new' | 'applied' | 'ignored';
+
+type Provider = 'openai' | 'gemini';
 
 type Job = {
   id: string;
@@ -103,21 +106,114 @@ Candidate profile: ${profile}
 Return ONLY JSON with shape {"jobs":[{"title":"","company":"","location":"","remote":"","publishedAt":"human-readable age/date","url":"https://...","source":"official/ATS domain","stack":["React"],"match":0,"why":"1-2 concise sentences on why this role fits the candidate","eligibility":"short explanation of why the candidate is eligible to apply","whyWorkingForUs":"a SHORT first-person answer (max 2 short sentences, under 40 words) to \\"Why do you want to work for us?\\", specific to this company/role, plain everyday language - avoid corporate buzzwords like thrilled, passionate, align, mission, journey, avoid em dashes, sound like a real candidate typed it quickly rather than an AI: include one small natural imperfection (a minor typo, an informal contraction, a slightly awkward phrasing) - just one or two such slips, keep it understandable"}]}. Match is 0-100 based on fit with the candidate profile. No markdown, no code fences.`;
 }
 
-function resolveApiKey(provided: unknown): string | undefined {
-  if (typeof provided === 'string' && provided.trim()) return provided.trim();
-  return process.env.OPENAI_API_KEY;
+function normalizeProvider(value: unknown): Provider {
+  return value === 'gemini' ? 'gemini' : 'openai';
 }
 
-async function fetchFreshJobs(existing: Job[], profile: string, apiKey: string): Promise<Job[]> {
+function resolveModel(provider: Provider): string {
+  return provider === 'gemini'
+    ? process.env.GEMINI_MODEL || 'gemini-2.5-flash'
+    : process.env.OPENAI_MODEL || 'gpt-4o';
+}
+
+function resolveApiKey(provider: Provider, provided: unknown): string | undefined {
+  if (typeof provided === 'string' && provided.trim()) return provided.trim();
+  return provider === 'gemini' ? process.env.GEMINI_API_KEY : process.env.OPENAI_API_KEY;
+}
+
+function splitDataUrl(dataUrl: string): { mimeType: string; base64: string } {
+  const match = /^data:([^;]+);base64,([\s\S]*)$/.exec(dataUrl);
+  return match ? { mimeType: match[1], base64: match[2] } : { mimeType: 'application/pdf', base64: dataUrl };
+}
+
+// Runs a plain text-in/JSON-out prompt against the selected provider.
+async function generateJson(provider: Provider, apiKey: string, prompt: string): Promise<string> {
+  if (provider === 'gemini') {
+    const ai = new GoogleGenAI({ apiKey });
+    const response = await ai.models.generateContent({
+      model: resolveModel(provider),
+      contents: prompt,
+      config: { responseMimeType: 'application/json' },
+    });
+    return response.text ?? '';
+  }
+
   const client = new OpenAI({ apiKey });
-
   const response = await client.responses.create({
-    model: process.env.OPENAI_MODEL || 'gpt-4o',
-    tools: [{ type: 'web_search' }],
-    input: buildSearchPrompt(profile, existing),
+    model: resolveModel(provider),
+    text: { format: { type: 'json_object' } },
+    input: prompt,
   });
+  return response.output_text;
+}
 
-  const text = response.output_text
+// Same as generateJson but attaches a file (e.g. the CV PDF) alongside the prompt.
+async function generateJsonFromFile(
+  provider: Provider,
+  apiKey: string,
+  prompt: string,
+  fileDataUrl: string,
+  filename: string
+): Promise<string> {
+  if (provider === 'gemini') {
+    const { mimeType, base64 } = splitDataUrl(fileDataUrl);
+    const ai = new GoogleGenAI({ apiKey });
+    const response = await ai.models.generateContent({
+      model: resolveModel(provider),
+      contents: [
+        { role: 'user', parts: [{ text: prompt }, { inlineData: { mimeType, data: base64 } }] },
+      ],
+      config: { responseMimeType: 'application/json' },
+    });
+    return response.text ?? '';
+  }
+
+  const client = new OpenAI({ apiKey });
+  const response = await client.responses.create({
+    model: resolveModel(provider),
+    text: { format: { type: 'json_object' } },
+    input: [
+      {
+        role: 'user',
+        content: [
+          { type: 'input_text', text: prompt },
+          { type: 'input_file', file_data: fileDataUrl, filename: filename || 'cv.pdf' },
+        ],
+      },
+    ],
+  });
+  return response.output_text;
+}
+
+// Runs a prompt with live web-search grounding enabled (used for job search).
+async function searchWithGrounding(provider: Provider, apiKey: string, prompt: string): Promise<string> {
+  if (provider === 'gemini') {
+    const ai = new GoogleGenAI({ apiKey });
+    const response = await ai.models.generateContent({
+      model: resolveModel(provider),
+      contents: prompt,
+      config: { tools: [{ googleSearch: {} }] },
+    });
+    return response.text ?? '';
+  }
+
+  const client = new OpenAI({ apiKey });
+  const response = await client.responses.create({
+    model: resolveModel(provider),
+    tools: [{ type: 'web_search' }],
+    input: prompt,
+  });
+  return response.output_text;
+}
+
+async function fetchFreshJobs(
+  existing: Job[],
+  profile: string,
+  provider: Provider,
+  apiKey: string
+): Promise<Job[]> {
+  const raw = await searchWithGrounding(provider, apiKey, buildSearchPrompt(profile, existing));
+  const text = raw
     .trim()
     .replace(/^```json\s*/, '')
     .replace(/```$/, '');
@@ -150,35 +246,26 @@ async function fetchFreshJobs(existing: Job[], profile: string, apiKey: string):
 
 app.post('/api/profile', async (req, res) => {
   try {
-    const { base64, filename, apiKey } = req.body || {};
+    const { base64, filename, apiKey, provider: providerRaw } = req.body || {};
+    const provider = normalizeProvider(providerRaw);
     if (!base64 || typeof base64 !== 'string') {
       return res.status(400).json({ error: 'Missing CV file.' });
     }
-    const resolvedKey = resolveApiKey(apiKey);
+    const resolvedKey = resolveApiKey(provider, apiKey);
     if (!resolvedKey) {
-      return res.status(500).json({ error: 'Set an OpenAI API key in Settings or in .env first.' });
+      return res.status(500).json({
+        error: `Set a${provider === 'gemini' ? ' Gemini' : 'n OpenAI'} API key in Settings or in .env first.`,
+      });
     }
 
-    const client = new OpenAI({ apiKey: resolvedKey });
-    const response = await client.responses.create({
-      model: process.env.OPENAI_MODEL || 'gpt-4o',
-      text: { format: { type: 'json_object' } },
-      input: [
-        {
-          role: 'user',
-          content: [
-            { type: 'input_text', text: PROFILE_EXTRACTION_PROMPT },
-            {
-              type: 'input_file',
-              file_data: base64,
-              filename: filename || 'cv.pdf',
-            },
-          ],
-        },
-      ],
-    });
-
-    const parsed = JSON.parse(response.output_text.trim());
+    const text = await generateJsonFromFile(
+      provider,
+      resolvedKey,
+      PROFILE_EXTRACTION_PROMPT,
+      base64,
+      filename || 'cv.pdf'
+    );
+    const parsed = JSON.parse(text.trim());
     const profile = String(parsed.profile || '').trim();
     if (!profile) throw new Error('Could not read the CV.');
     res.json({ profile, cv: parsed.cv || null });
@@ -695,26 +782,23 @@ ${JSON.stringify(cv)}`;
 
 app.post('/api/tailor-cv', async (req, res) => {
   try {
-    const { cv, job, layout, apiKey } = req.body || {};
+    const { cv, job, layout, apiKey, provider: providerRaw } = req.body || {};
+    const provider = normalizeProvider(providerRaw);
     if (!cv || typeof cv !== 'object') {
       return res.status(400).json({ error: 'Missing CV data. Re-upload your CV.' });
     }
     if (!job || typeof job !== 'object') {
       return res.status(400).json({ error: 'Missing job.' });
     }
-    const resolvedKey = resolveApiKey(apiKey);
+    const resolvedKey = resolveApiKey(provider, apiKey);
     if (!resolvedKey) {
-      return res.status(500).json({ error: 'Set an OpenAI API key in Settings or in .env first.' });
+      return res.status(500).json({
+        error: `Set a${provider === 'gemini' ? ' Gemini' : 'n OpenAI'} API key in Settings or in .env first.`,
+      });
     }
 
-    const client = new OpenAI({ apiKey: resolvedKey });
-    const response = await client.responses.create({
-      model: process.env.OPENAI_MODEL || 'gpt-4o',
-      text: { format: { type: 'json_object' } },
-      input: buildTailorPrompt(cv, job),
-    });
-
-    const tailored: CvData = JSON.parse(response.output_text.trim());
+    const text = await generateJson(provider, resolvedKey, buildTailorPrompt(cv, job));
+    const tailored: CvData = JSON.parse(text.trim());
     const pdf = await renderCvPdf(tailored, typeof layout === 'string' ? layout : 'classic');
 
     res.setHeader('Content-Type', 'application/pdf');
@@ -755,23 +839,26 @@ app.get('/api/jobs', (req, res) => {
 
 app.post('/api/jobs/next', async (req, res) => {
   try {
-    const { profile, clientId, apiKey } = req.body || {};
+    const { profile, clientId, apiKey, provider: providerRaw } = req.body || {};
+    const provider = normalizeProvider(providerRaw);
     if (!clientId || !CLIENT_ID_RE.test(clientId)) {
       return res.status(400).json({ error: 'Missing or invalid clientId.' });
     }
     if (!profile || typeof profile !== 'string' || profile.trim().length < 10) {
       return res.status(400).json({ error: 'Missing candidate profile. Upload your CV first.' });
     }
-    const resolvedKey = resolveApiKey(apiKey);
+    const resolvedKey = resolveApiKey(provider, apiKey);
     if (!resolvedKey) {
-      return res.status(500).json({ error: 'Set an OpenAI API key in Settings or in .env first.' });
+      return res.status(500).json({
+        error: `Set a${provider === 'gemini' ? ' Gemini' : 'n OpenAI'} API key in Settings or in .env first.`,
+      });
     }
 
     const jobs = readJobs(clientId);
     const next = jobs.find((j) => j.status === 'new');
     if (next) return res.json({ job: next });
 
-    const fresh = await fetchFreshJobs(jobs, profile, resolvedKey);
+    const fresh = await fetchFreshJobs(jobs, profile, provider, resolvedKey);
     if (!fresh.length) return res.json({ job: null });
 
     writeJobs(clientId, [...jobs, ...fresh]);
