@@ -215,6 +215,8 @@ async function generateJsonFromFile(
 
   if (provider === 'openrouter') {
     // OpenRouter parses the PDF server-side for models without native file input.
+    // CVs are text PDFs, so the free text-layer engine is used instead of the
+    // default OCR one (mistral-ocr, billed per page). Scanned CVs won't work.
     const response = await newOpenRouterClient(apiKey).chat.completions.create({
       model: resolveModel(provider),
       messages: [
@@ -226,7 +228,8 @@ async function generateJsonFromFile(
           ],
         },
       ],
-    });
+      plugins: [{ id: 'file-parser', pdf: { engine: 'pdf-text' } }],
+    } as OpenAI.Chat.ChatCompletionCreateParamsNonStreaming);
     return extractJsonObject(response.choices[0]?.message?.content ?? '');
   }
 

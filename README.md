@@ -44,7 +44,8 @@ the browser regardless, since that's what actually gets sent with each request.
 
 OpenRouter talks the OpenAI Chat Completions API, so any model slug on
 [openrouter.ai/models](https://openrouter.ai/models) works. CV PDFs are parsed by OpenRouter
-itself for models without native file input.
+itself (text-layer extraction via the free `pdf-text` engine, so scanned/image-only CVs are not
+supported on this provider).
 
 ## Deploy to Firebase
 
