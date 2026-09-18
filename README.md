@@ -1,7 +1,7 @@
 # Job Scout
 
-React + TypeScript job finder using either the OpenAI Responses API or the Gemini API, both with
-built-in web search.
+React + TypeScript job finder using the OpenAI Responses API, the Gemini API or OpenRouter, all
+with built-in web search.
 
 ## Run locally
 
@@ -11,11 +11,11 @@ pnpm dev
 ```
 
 Open http://localhost:5173. There's no bundled API key: the app will prompt you to pick a
-provider (ChatGPT/OpenAI or Gemini/Google) and enter your own API key for it on first run (see
-"What it does" below).
+provider (ChatGPT/OpenAI, Gemini/Google or OpenRouter) and enter your own API key for it on first
+run (see "What it does" below).
 
 ## What it does
-- On first visit, pick an AI provider (ChatGPT or Gemini) and enter your own API key for it. It's
+- On first visit, pick an AI provider (ChatGPT, Gemini or OpenRouter) and enter your own API key for it. It's
   stored only in your browser's `localStorage` and sent per-request - never saved on any server.
   You can change the provider or key later from the menu → Settings.
 - Then upload your CV (PDF). It's sent to the selected provider to extract a candidate profile,
@@ -30,9 +30,21 @@ provider (ChatGPT/OpenAI or Gemini/Google) and enter your own API key for it on 
 - The menu (hamburger icon, top left) lists every job you've applied to and opens Settings, where you can switch provider, update your API key and pick the tailored-CV layout.
 
 Locally, state is persisted per-browser in `data/clients/<clientId>.json`. `OPENAI_API_KEY` /
-`GEMINI_API_KEY` in `.env` (copy `.env.example`) are optional server-side fallbacks for calling
-the API directly (e.g. with `curl`) - the app itself always asks for a key in the browser
-regardless, since that's what actually gets sent with each request.
+`GEMINI_API_KEY` / `OPENROUTER_API_KEY` in `.env` (copy `.env.example`) are optional server-side
+fallbacks for calling the API directly (e.g. with `curl`) - the app itself always asks for a key in
+the browser regardless, since that's what actually gets sent with each request.
+
+## Providers
+
+| Provider | Default model | Override | Web search |
+|---|---|---|---|
+| ChatGPT (OpenAI) | `gpt-4o` | `OPENAI_MODEL` | OpenAI `web_search` tool (Responses API) |
+| Gemini (Google) | `gemini-2.5-flash` | `GEMINI_MODEL` | Google Search grounding |
+| OpenRouter | `perplexity/sonar` | `OPENROUTER_MODEL` | Native for `perplexity/*` models, otherwise OpenRouter's `web` plugin (extra per-request cost) |
+
+OpenRouter talks the OpenAI Chat Completions API, so any model slug on
+[openrouter.ai/models](https://openrouter.ai/models) works. CV PDFs are parsed by OpenRouter
+itself for models without native file input.
 
 ## Deploy to Firebase
 
@@ -41,10 +53,11 @@ The app is set up as **Firebase Hosting** (the React frontend) + **Cloud Functio
 One-time project setup (from the Firebase console, or CLI as noted):
 1. **Enable Firestore** for the project (Firestore Database → Create database, native mode, pick a region). Required - it's not enabled yet.
 2. **Upgrade the project to the Blaze (pay-as-you-go) plan.** Cloud Functions v2 (used here) require it, and it also causes real cost: every visitor's search calls the selected AI provider on your key (if they haven't set their own in Settings). There is no login/paywall in front of this app (by design, per your choice), so anyone with the URL can trigger searches.
-3. Set the provider key(s) as Cloud Functions secrets (never commit them) - at least one is needed as a fallback, both if you want both providers to work without visitors supplying their own key:
+3. Set the provider key(s) as Cloud Functions secrets (never commit them) - at least one is needed as a fallback, all of them if you want every provider to work without visitors supplying their own key:
    ```bash
    firebase functions:secrets:set OPENAI_API_KEY
    firebase functions:secrets:set GEMINI_API_KEY
+   firebase functions:secrets:set OPENROUTER_API_KEY
    ```
 4. (Optional) Override the models by creating `functions/.env` from `functions/.env.example`.
 

@@ -15,7 +15,7 @@ const port = Number(process.env.PORT || 8787);
 
 type Status = 'new' | 'applied' | 'ignored';
 
-type Provider = 'openai' | 'gemini';
+type Provider = 'openai' | 'gemini' | 'openrouter';
 
 type Job = {
   id: string;
@@ -107,18 +107,55 @@ Return ONLY JSON with shape {"jobs":[{"title":"","company":"","location":"","rem
 }
 
 function normalizeProvider(value: unknown): Provider {
-  return value === 'gemini' ? 'gemini' : 'openai';
+  return value === 'gemini' || value === 'openrouter' ? value : 'openai';
 }
 
+const PROVIDER_LABELS: Record<Provider, string> = {
+  openai: 'an OpenAI',
+  gemini: 'a Gemini',
+  openrouter: 'an OpenRouter',
+};
+
 function resolveModel(provider: Provider): string {
-  return provider === 'gemini'
-    ? process.env.GEMINI_MODEL || 'gemini-2.5-flash'
-    : process.env.OPENAI_MODEL || 'gpt-4o';
+  switch (provider) {
+    case 'gemini':
+      return process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+    case 'openrouter':
+      return process.env.OPENROUTER_MODEL || 'perplexity/sonar';
+    default:
+      return process.env.OPENAI_MODEL || 'gpt-4o';
+  }
+}
+
+// OpenRouter exposes an OpenAI-compatible Chat Completions API; the optional
+// headers are only used by OpenRouter for app attribution/rankings.
+function newOpenRouterClient(apiKey: string): OpenAI {
+  return new OpenAI({
+    apiKey,
+    baseURL: 'https://openrouter.ai/api/v1',
+    defaultHeaders: { 'X-Title': 'Job Scout' },
+  });
+}
+
+// Models routed through OpenRouter don't always honour response_format, and
+// some (e.g. Perplexity) wrap JSON in fences or add citations around it, so
+// the JSON object is extracted from the raw text instead.
+function extractJsonObject(text: string): string {
+  const start = text.indexOf('{');
+  const end = text.lastIndexOf('}');
+  return start >= 0 && end > start ? text.slice(start, end + 1) : text.trim();
 }
 
 function resolveApiKey(provider: Provider, provided: unknown): string | undefined {
   if (typeof provided === 'string' && provided.trim()) return provided.trim();
-  return provider === 'gemini' ? process.env.GEMINI_API_KEY : process.env.OPENAI_API_KEY;
+  switch (provider) {
+    case 'gemini':
+      return process.env.GEMINI_API_KEY;
+    case 'openrouter':
+      return process.env.OPENROUTER_API_KEY;
+    default:
+      return process.env.OPENAI_API_KEY;
+  }
 }
 
 function splitDataUrl(dataUrl: string): { mimeType: string; base64: string } {
@@ -136,6 +173,14 @@ async function generateJson(provider: Provider, apiKey: string, prompt: string):
       config: { responseMimeType: 'application/json' },
     });
     return response.text ?? '';
+  }
+
+  if (provider === 'openrouter') {
+    const response = await newOpenRouterClient(apiKey).chat.completions.create({
+      model: resolveModel(provider),
+      messages: [{ role: 'user', content: prompt }],
+    });
+    return extractJsonObject(response.choices[0]?.message?.content ?? '');
   }
 
   const client = new OpenAI({ apiKey });
@@ -168,6 +213,23 @@ async function generateJsonFromFile(
     return response.text ?? '';
   }
 
+  if (provider === 'openrouter') {
+    // OpenRouter parses the PDF server-side for models without native file input.
+    const response = await newOpenRouterClient(apiKey).chat.completions.create({
+      model: resolveModel(provider),
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: prompt },
+            { type: 'file', file: { filename: filename || 'cv.pdf', file_data: fileDataUrl } },
+          ],
+        },
+      ],
+    });
+    return extractJsonObject(response.choices[0]?.message?.content ?? '');
+  }
+
   const client = new OpenAI({ apiKey });
   const response = await client.responses.create({
     model: resolveModel(provider),
@@ -195,6 +257,18 @@ async function searchWithGrounding(provider: Provider, apiKey: string, prompt: s
       config: { tools: [{ googleSearch: {} }] },
     });
     return response.text ?? '';
+  }
+
+  if (provider === 'openrouter') {
+    const model = resolveModel(provider);
+    // Perplexity models search the web natively; anything else gets OpenRouter's web plugin.
+    const plugins = model.startsWith('perplexity/') ? undefined : [{ id: 'web' }];
+    const response = await newOpenRouterClient(apiKey).chat.completions.create({
+      model,
+      messages: [{ role: 'user', content: prompt }],
+      ...(plugins ? { plugins } : {}),
+    } as OpenAI.Chat.ChatCompletionCreateParamsNonStreaming);
+    return extractJsonObject(response.choices[0]?.message?.content ?? '');
   }
 
   const client = new OpenAI({ apiKey });
@@ -254,7 +328,7 @@ app.post('/api/profile', async (req, res) => {
     const resolvedKey = resolveApiKey(provider, apiKey);
     if (!resolvedKey) {
       return res.status(500).json({
-        error: `Set a${provider === 'gemini' ? ' Gemini' : 'n OpenAI'} API key in Settings or in .env first.`,
+        error: `Set ${PROVIDER_LABELS[provider]} API key in Settings or in .env first.`,
       });
     }
 
@@ -793,7 +867,7 @@ app.post('/api/tailor-cv', async (req, res) => {
     const resolvedKey = resolveApiKey(provider, apiKey);
     if (!resolvedKey) {
       return res.status(500).json({
-        error: `Set a${provider === 'gemini' ? ' Gemini' : 'n OpenAI'} API key in Settings or in .env first.`,
+        error: `Set ${PROVIDER_LABELS[provider]} API key in Settings or in .env first.`,
       });
     }
 
@@ -850,7 +924,7 @@ app.post('/api/jobs/next', async (req, res) => {
     const resolvedKey = resolveApiKey(provider, apiKey);
     if (!resolvedKey) {
       return res.status(500).json({
-        error: `Set a${provider === 'gemini' ? ' Gemini' : 'n OpenAI'} API key in Settings or in .env first.`,
+        error: `Set ${PROVIDER_LABELS[provider]} API key in Settings or in .env first.`,
       });
     }
 
